@@ -41,7 +41,7 @@
     "build": "ts-scripts build",
     "format": "ts-scripts format",
     "lint": "ts-scripts lint",
-    "prepare": "ts-scripts install",
+    "prepare": "ts-scripts install && ts-scripts build",
     "prepublishOnly": "npm run build",
     "specs": "ts-scripts specs",
     "test": "ts-scripts test"
