@@ -1,4 +1,38 @@
 /**
+ * Unwraps the value type from an {@link Sql} instance, otherwise returns the
+ * type itself.
+ */
+type UnwrapSql<T> = T extends Sql<infer U> ? U : T;
+
+/**
+ * Unwraps the value types from an array of {@link Sql} instances, otherwise
+ * returns the types themselves.
+ */
+type UnwrapSqlArray<T extends ReadonlyArray<unknown>> = {
+  [K in keyof T]: UnwrapSql<T[K]>;
+};
+
+/**
+ * Flattens a nested array type into a single-level array type.
+ */
+type Flatten<T extends ReadonlyArray<unknown>> = T extends [
+  infer First,
+  ...infer Rest,
+]
+  ? First extends ReadonlyArray<unknown>
+    ? [...First, ...Flatten<Rest>]
+    : [First, ...Flatten<Rest>]
+  : [];
+
+/**
+ * Computes the flattened {@link Value} tuple produced from a tuple of raw
+ * template arguments (which may themselves be {@link Sql} instances).
+ */
+type FlattenValues<T extends ReadonlyArray<RawValue>> = Flatten<
+  UnwrapSqlArray<T>
+>;
+
+/**
  * Values supported by SQL engine.
  */
 export type Value = unknown;
@@ -10,9 +44,13 @@ export type RawValue = Value | Sql;
 
 /**
  * A SQL instance can be nested within each other to build SQL strings.
+ *
+ * The `Values` type parameter is the flattened tuple of bound values produced
+ * by the template, i.e., the type of the `values` property after any nested
+ * {@link Sql} instances have been inlined.
  */
-export class Sql {
-  readonly values: Value[];
+export class Sql<Values extends ReadonlyArray<Value> = readonly any[]> {
+  readonly values: Values;
   readonly strings: string[];
 
   constructor(rawStrings: readonly string[], rawValues: readonly RawValue[]) {
@@ -33,7 +71,7 @@ export class Sql {
       0,
     );
 
-    this.values = new Array(valuesLength);
+    const values = new Array<Value>(valuesLength);
     this.strings = new Array(valuesLength + 1);
 
     this.strings[0] = rawStrings[0];
@@ -53,17 +91,19 @@ export class Sql {
 
         let childIndex = 0;
         while (childIndex < child.values.length) {
-          this.values[pos++] = child.values[childIndex++];
+          values[pos++] = child.values[childIndex++];
           this.strings[pos] = child.strings[childIndex];
         }
 
         // Append raw string to current string.
         this.strings[pos] += rawString;
       } else {
-        this.values[pos++] = child;
+        values[pos++] = child;
         this.strings[pos] = rawString;
       }
     }
+
+    this.values = values as unknown as Values;
   }
 
   get sql() {
@@ -103,19 +143,19 @@ export class Sql {
 /**
  * Create a SQL query for a list of values.
  */
-export function join(
-  values: readonly RawValue[],
+export function join<T extends RawValue[] = any[]>(
+  values: T,
   separator = ",",
   prefix = "",
   suffix = "",
-) {
+): Sql<FlattenValues<T>> {
   if (values.length === 0) {
     throw new TypeError(
       "Expected `join([])` to be called with an array of multiple elements, but got an empty array",
     );
   }
 
-  return new Sql(
+  return new Sql<FlattenValues<T>>(
     [prefix, ...Array(values.length - 1).fill(separator), suffix],
     values,
   );
@@ -124,12 +164,12 @@ export function join(
 /**
  * Create a SQL query for a list of structured values.
  */
-export function bulk(
-  data: ReadonlyArray<ReadonlyArray<RawValue>>,
+export function bulk<T extends ReadonlyArray<RawValue> = readonly any[]>(
+  data: ReadonlyArray<T>,
   separator = ",",
   prefix = "",
   suffix = "",
-) {
+): Sql<Value[]> {
   const length = data.length && data[0].length;
 
   if (length === 0) {
@@ -148,7 +188,7 @@ export function bulk(
     return new Sql(["(", ...Array(item.length - 1).fill(separator), ")"], item);
   });
 
-  return new Sql(
+  return new Sql<Value[]>(
     [prefix, ...Array(values.length - 1).fill(separator), suffix],
     values,
   );
@@ -157,8 +197,8 @@ export function bulk(
 /**
  * Create raw SQL statement.
  */
-export function raw(value: string) {
-  return new Sql([value], []);
+export function raw(value: string): Sql<[]> {
+  return new Sql<[]>([value], []);
 }
 
 /**
@@ -167,11 +207,42 @@ export function raw(value: string) {
 export const empty = raw("");
 
 /**
+ * Concatenates multiple SQL templates into a single SQL template.
+ *
+ * @param templates - The array of SQL templates to concatenate into a single
+ * SQL template.
+ * @param separator - The string to insert between each SQL template when
+ * concatenating their strings.
+ * @returns A new SQL template representing the concatenation of the input SQL
+ * templates with their values flattened into a single array.
+ */
+export function concat<const T extends Sql[]>(
+  templates: T,
+  separator = " ",
+): Sql<FlattenValues<T>> {
+  const strings: string[] = [];
+  const values: Value[] = [];
+
+  for (const template of templates) {
+    if (strings.length === 0) {
+      strings.push(...template.strings);
+    } else {
+      strings[strings.length - 1] += separator + template.strings[0];
+      strings.push(...template.strings.slice(1));
+    }
+
+    values.push(...template.values);
+  }
+
+  return new Sql<FlattenValues<T>>(strings, values);
+}
+
+/**
  * Create a SQL object from a template string.
  */
-export default function sql(
-  strings: readonly string[],
-  ...values: readonly RawValue[]
-) {
-  return new Sql(strings, values);
+export default function sql<T extends ReadonlyArray<RawValue> = readonly any[]>(
+  strings: TemplateStringsArray,
+  ...values: T
+): Sql<FlattenValues<T>> {
+  return new Sql<FlattenValues<T>>(strings, values);
 }
