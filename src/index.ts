@@ -33,9 +33,25 @@ type FlattenValues<T extends ReadonlyArray<RawValue>> = Flatten<
 >;
 
 /**
- * Values supported by SQL engine.
+ * Augment this interface from a consumer module to narrow {@link Value}:
+ *
+ * ```ts
+ * declare module "sql-template-tag" {
+ *   interface Register {
+ *     value: string | number | boolean | Date | null;
+ *   }
+ * }
+ * ```
+ *
+ * Without augmentation, {@link Value} falls back to `unknown`.
  */
-export type Value = unknown;
+export interface Register {}
+
+/**
+ * Values supported by SQL engine. Defaults to `unknown`; narrow by augmenting
+ * the {@link Register} interface.
+ */
+export type Value = Register extends { value: infer V } ? V : unknown;
 
 /**
  * Supported value or SQL instance.
